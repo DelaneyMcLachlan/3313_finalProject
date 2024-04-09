@@ -10,7 +10,25 @@
 
 using namespace Sync;
 
+std::list<Socket> clientSockets; // global list of all connected clients 
+std::mutex clientListMutex;
+
+void BroadcastMessage(const std::string& message) { // iterates over the list of clients and sends the message to each one 
+    std::lock_guard<std::mutex> lock(clientListMutex);
+    for (auto& clientSocket : clientSockets) {
+        ByteArray data(message);
+        clientSocket.Write(data);
+    }
+}
+
+
 void HandleClient(Socket clientSocket) {
+
+    { // adding new client to the list 
+        std::lock_guard<std::mutex> lock(clientListMutex);
+        clientSockets.push_back(clientSocket);
+    }
+
     try {
         // Read the username first
         ByteArray usernameData;
@@ -30,15 +48,40 @@ void HandleClient(Socket clientSocket) {
 
             std::cout << username << ": " << receivedStr << std::endl;
 
+
             // Here you can handle other commands or messages from the client
             // For now, let's just echo back the message
-            ByteArray echoData(receivedStr);
-            clientSocket.Write(echoData);
+            
+            // moved these lines inside the if / else block
+
+            // check if the message is a broadcast command
+            if (receivedStr.substr(0, 10) == "broadcast:")
+            {
+                // the actual message to broadcast is everything after the "broadcast:" command
+                std::string broadcastMessage = receivedStr.substr(10);
+
+                // call the broadcast function with the message
+                BroadcastMessage(broadcastMessage);
+
+                // confirmation gets sent back to the client
+                ByteArray confirmationData("Your message has been broadcasted.");
+                clientSocket.Write(confirmationData);
+            }
+            else
+            {
+                ByteArray echoData(receivedStr);
+                clientSocket.Write(echoData);
+            }
         }
     } catch (...) {
         std::cerr << "Error occurred with a client connection" << std::endl;
     }
 
+    { // removing client from the list 
+        std::lock_guard<std::mutex> lock(clientListMutex);
+        clientSockets.remove(clientSocket);
+    }
+    
     clientSocket.Close();
 }
 
